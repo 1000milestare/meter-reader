@@ -23,10 +23,30 @@ struct Dial {
 }
 
 const DIALS: [Dial; 4] = [
-    Dial { seed_x: 675.0,  seed_y: 925.0, ccw: true,  cuft_per_rev: 1_000_000.0 },
-    Dial { seed_x: 1030.0, seed_y: 925.0, ccw: false, cuft_per_rev: 100_000.0 },
-    Dial { seed_x: 1390.0, seed_y: 925.0, ccw: true,  cuft_per_rev: 10_000.0 },
-    Dial { seed_x: 1755.0, seed_y: 920.0, ccw: false, cuft_per_rev: 1_000.0 },
+    Dial {
+        seed_x: 675.0,
+        seed_y: 925.0,
+        ccw: true,
+        cuft_per_rev: 1_000_000.0,
+    },
+    Dial {
+        seed_x: 1030.0,
+        seed_y: 925.0,
+        ccw: false,
+        cuft_per_rev: 100_000.0,
+    },
+    Dial {
+        seed_x: 1390.0,
+        seed_y: 925.0,
+        ccw: true,
+        cuft_per_rev: 10_000.0,
+    },
+    Dial {
+        seed_x: 1755.0,
+        seed_y: 920.0,
+        ccw: false,
+        cuft_per_rev: 1_000.0,
+    },
 ];
 
 // Geometry in reference pixels.
@@ -161,13 +181,20 @@ fn draw_line(out: &mut RgbImage, x0: f64, y0: f64, x1: f64, y1: f64, c: Rgb<u8>,
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
-    let path = args.next().ok_or("usage: meter_read <photo.jpg> [overlay.png]")?;
+    let path = args
+        .next()
+        .ok_or("usage: meter_read <photo.jpg> [overlay.png]")?;
     let overlay_path = args.next().unwrap_or_else(|| "meter_debug.png".into());
 
     let rgb = image::open(&path)?.to_rgb8();
     let gray = image::DynamicImage::ImageRgb8(rgb.clone()).to_luma8();
     let scale = gray.width() as f64 / REF_W;
-    eprintln!("image {}x{} (scale {:.3})", gray.width(), gray.height(), scale);
+    eprintln!(
+        "image {}x{} (scale {:.3})",
+        gray.width(),
+        gray.height(),
+        scale
+    );
 
     let sat = integral(&gray);
     let mut overlay = rgb;
@@ -178,20 +205,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let (hx, hy) = find_hub(&sat, d.seed_x * scale, d.seed_y * scale, scale);
         let theta = find_pointer(&gray, hx, hy, scale);
         let turns = theta / (2.0 * PI);
-        frac[i] = if d.ccw { (1.0 - turns).rem_euclid(1.0) } else { turns };
+        frac[i] = if d.ccw {
+            (1.0 - turns).rem_euclid(1.0)
+        } else {
+            turns
+        };
 
         let green = Rgb([0, 255, 0]);
         let red = Rgb([255, 0, 0]);
         draw_line(&mut overlay, hx - 12.0, hy, hx + 12.0, hy, green, 2);
         draw_line(&mut overlay, hx, hy - 12.0, hx, hy + 12.0, green, 2);
         draw_line(
-            &mut overlay, hx, hy,
-            hx + 170.0 * scale * theta.sin(), hy - 170.0 * scale * theta.cos(),
-            red, 2,
+            &mut overlay,
+            hx,
+            hy,
+            hx + 170.0 * scale * theta.sin(),
+            hy - 170.0 * scale * theta.cos(),
+            red,
+            2,
         );
         eprintln!(
             "dial {} ({:>9.0}/rev): hub=({:.0},{:.0}) pointer={:.1} deg cw -> position {:.2}",
-            i + 1, d.cuft_per_rev, hx, hy, theta.to_degrees(), frac[i] * 10.0
+            i + 1,
+            d.cuft_per_rev,
+            hx,
+            hy,
+            theta.to_degrees(),
+            frac[i] * 10.0
         );
     }
     overlay.save(&overlay_path)?;
@@ -212,7 +252,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     // Lowest-dial digit consistent with the carry chain:
     let rounded = (x / 100.0).round() * 100.0;
-    println!("digits (left to right): {}{}{}{}", digits[0], digits[1], digits[2], digits[3]);
+    println!(
+        "digits (left to right): {}{}{}{}",
+        digits[0], digits[1], digits[2], digits[3]
+    );
     println!("reading: {:.0} cubic feet (nearest 100)", rounded);
     println!("overlay: {}", overlay_path);
     Ok(())
