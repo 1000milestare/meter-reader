@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>meter-reader annotator</title>
+<style>
+  body { font: 14px/1.4 system-ui, sans-serif; margin: 0; display: flex; height: 100vh; }
+  #side { width: 300px; padding: 12px; overflow: auto; border-right: 1px solid #ccc; box-sizing: border-box; }
+  #main { flex: 1; overflow: auto; background: #222; }
+  canvas { display: block; cursor: crosshair; }
+  button { margin: 2px 0; padding: 6px 10px; }
+  button.on { background: #cde; }
+  .dial { border: 1px solid #ddd; padding: 6px; margin: 6px 0; }
+  .dial h3 { margin: 0 0 4px; font-size: 14px; }
+  input[type=number] { width: 70px; }
+  textarea { width: 100%; height: 140px; font: 12px monospace; }
+  #hint { color: #555; margin: 6px 0; }
+</style>
+</head>
+<body>
+<div id="side">
+  <p><input type="file" id="file" accept="image/*"></p>
+  <p>Mode:
+    <button data-mode="box">Box</button>
+    <button data-mode="hub">Hub</button>
+    <button data-mode="tip">Tip</button>
+  </p>
+  <p id="hint">Pick a dial number, then choose a mode and drag (box) or click (hub, tip).</p>
+  <p>Active dial: <select id="active"></select>
+    <button id="addDial">+ dial</button></p>
+  <div id="dials"></div>
+  <p>
+    <label>Reading (whole number): <input type="text" id="reading" size="10" placeholder="e.g. 810100"></label>
+  </p>
+  <p>
+    <button id="exportBtn">Export JSON</button>
+    <button id="importBtn">Load JSON</button>
+    <input type="file" id="importFile" accept="application/json" style="display:none">
+  </p>
+  <textarea id="out" readonly></textarea>
+</div>
+<div id="main"><canvas id="cv"></canvas></div>
+<script>
+(() => {
+  const cv = document.getElementById('cv');
+  const ctx = cv.getContext('2d');
+  const $ = (id) => document.getElementById(id);
+  let img = null, imgName = '', mode = 'box';
+  let dials = [];                  // {name, box:[x0,y0,x1,y1]|null, hub:[x,y]|null, tip:[x,y]|null, digit:null}
+  let active = 0;
+  let drag = null;                 // {x0,y0} while drawing a box
+
+  const COLORS = ['#ff3b30', '#34c759', '#007aff', '#ff9500', '#af52de', '#5ac8fa'];
+
+  function addDial() {
+    dials.push({ name: 'dial ' + (dials.length + 1), box: null, hub: null, tip: null });
+    active = dials.length - 1;
+    render();
+  }
+
+  function renderSide() {
+    const sel = $('active');
+    sel.innerHTML = dials.map((d, i) => `<option value="${i}">${d.name}</option>`).join('');
+    sel.value = active;
+    $('dials').innerHTML = dials.map((d, i) => `
+      <div class="dial">
+        <h3 style="color:${COLORS[i % COLORS.length]}">${d.name}</h3>
+        box: ${fmt(d.box)}<br>hub: ${fmt(d.hub)}<br>tip: ${fmt(d.tip)}
+      </div>`).join('');
+    document.querySelectorAll('[data-mode]').forEach(b =>
+      b.classList.toggle('on', b.dataset.mode === mode));
+  }
+  const fmt = (p) => p ? (Array.isArray(p[0]) ? p.map(q => q.join(',')).join(' ') : p.join(',')) : '—';
+
+  function toImg(e) {
+    const r = cv.getBoundingClientRect();
+    const x = (e.clientX - r.left) * (cv.width / r.width);
+    const y = (e.clientY - r.top) * (cv.height / r.height);
+    return [Math.round(x), Math.round(y)];
+  }
+
+  function render() {
+    if (img) {
+      cv.width = img.width; cv.height = img.height;
+      ctx.drawImage(img, 0, 0);
+    }
+    dials.forEach((d, i) => {
+      const c = COLORS[i % COLORS.length];
+      ctx.lineWidth = Math.max(2, img ? img.width / 400 : 2);
+      ctx.strokeStyle = c; ctx.fillStyle = c;
+      if (d.box) {
+        const [x0, y0, x1, y1] = d.box;
+        ctx.strokeRect(x0, y0, x1 - x0, y1 - y0);
+      }
+      if (d.hub) { dot(d.hub, c); }
+      if (d.tip) { dot(d.tip, c); if (d.hub) line(d.hub, d.tip, c); }
+    });
+    if (drag && drag.cur) {
+      const [x0, y0] = drag.start, [x1, y1] = drag.cur;
+      ctx.strokeStyle = '#fff'; ctx.setLineDash([6, 4]);
+      ctx.strokeRect(x0, y0, x1 - x0, y1 - y0);
+      ctx.setLineDash([]);
+    }
+    renderSide();
+    exportText();
+  }
+  function dot([x, y], c) {
+    const r = Math.max(5, (img ? img.width : 400) / 120);
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+  }
+  function line(a, b, c) {
+    ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
+  }
+
+  cv.addEventListener('mousedown', (e) => {
+    if (!img || !dials.length) return;
+    const p = toImg(e);
+    if (mode === 'box') drag = { start: p, cur: p };
+    else if (mode === 'hub') dials[active].hub = p;
+    else if (mode === 'tip') dials[active].tip = p;
+    render();
+  });
+  cv.addEventListener('mousemove', (e) => {
+    if (drag) { drag.cur = toImg(e); render(); }
+  });
+  cv.addEventListener('mouseup', (e) => {
+    if (!drag) return;
+    const [ax, ay] = drag.start, [bx, by] = toImg(e);
+    const box = [Math.min(ax, bx), Math.min(ay, by), Math.max(ax, bx), Math.max(ay, by)];
+    if (box[2] - box[0] > 5 && box[3] - box[1] > 5) dials[active].box = box;
+    drag = null;
+    render();
+  });
+
+  document.querySelectorAll('[data-mode]').forEach(b =>
+    b.addEventListener('click', () => { mode = b.dataset.mode; renderSide(); }));
+  $('active').addEventListener('change', (e) => { active = +e.target.value; render(); });
+  $('addDial').addEventListener('click', addDial);
+  $('reading').addEventListener('input', (e) => { $('out').value = exportText(e.target.value); });
+
+  $('file').addEventListener('change', (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    imgName = f.name;
+    const url = URL.createObjectURL(f);
+    const im = new Image();
+    im.onload = () => { img = im; if (!dials.length) addDial(); render(); };
+    im.src = url;
+  });
+
+  function exportText(reading) {
+    const r = reading ?? $('reading').value.trim();
+    const doc = {
+      image: imgName,
+      width: img ? img.width : null,
+      height: img ? img.height : null,
+      reading: r ? Number(r) : null,
+      dials: dials.map(d => ({ name: d.name, box: d.box, hub: d.hub, tip: d.tip })),
+    };
+    const text = JSON.stringify(doc, null, 2);
+    $('out').value = text;
+    return text;
+  }
+
+  $('exportBtn').addEventListener('click', () => {
+    const text = exportText();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+    a.download = (imgName || 'image').replace(/\.[^.]+$/, '') + '.json';
+    a.click();
+  });
+
+  $('importBtn').addEventListener('click', () => $('importFile').click());
+  $('importFile').addEventListener('change', async (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    const doc = JSON.parse(await f.text());
+    dials = doc.dials || [];
+    $('reading').value = doc.reading ?? '';
+    active = 0;
+    render();
+  });
+
+  render();
+})();
+</script>
+</body>
+</html>
