@@ -1,0 +1,13 @@
+[package]
+name = "meter_read"
+version = "0.1.0"
+edition = "2021"
+license = "Unlicense"
+description = "Reads Schlumberger gas meter dials from a photo and outputs the reading, in Rust."
+repository = "https://github.com/1000milestare/meter-reader"
+
+[dependencies]
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+
+[profile.release]
+opt-level = 3
